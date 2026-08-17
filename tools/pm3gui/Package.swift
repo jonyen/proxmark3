@@ -13,7 +13,9 @@ let libDir = repoRoot.appendingPathComponent("client/experimental_lib/build").pa
 
 let package = Package(
     name: "PM3GUI",
-    platforms: [.macOS(.v14)],
+    // Matches what libpm3 is built for on this machine; anything lower makes
+    // the linker warn about the dylib's deployment target.
+    platforms: [.macOS("26.0")],
     targets: [
         .systemLibrary(name: "CPM3", path: "Sources/CPM3"),
         .executableTarget(

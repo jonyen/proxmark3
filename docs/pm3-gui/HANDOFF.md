@@ -195,9 +195,48 @@ Line prefixes are consistent and worth keying on: `[+]` success, `[-]` failure,
 `Password set...... No` — worth surfacing, since a passworded tag will fail to
 write.
 
+## The heap overflow the GUI flushed out
+
+`pm3_grabbed_output_get` terminated the captured output at
+`g_grabbed_output.size`, which is the *allocated capacity*, not the number of
+bytes written — that is `idx`. Every call wrote one zero byte past the end of
+the heap allocation.
+
+The CLI survives it because it calls the function once or twice and exits. A GUI
+captures output on every button press, so the corrupted malloc metadata gets
+reused and the process dies somewhere unrelated — first as a SIGTRAP inside
+AppKit's AutoFill, then as `AutoreleasePoolPage busted` on a dispatch worker
+thread. Neither backtrace mentioned proxmark3 code.
+
+Fixed in `client/src/pm3.c`. To reproduce it on any build predating that fix:
+
+```bash
+MALLOC_STRICT_SIZE=1 MallocGuardEdges=1 \
+  DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib \
+  DYLD_LIBRARY_PATH=../build ./test_grab <port>
+```
+
+Guard malloc puts the allocation flush against a guard page, so the one-byte
+overrun becomes an immediate SIGSEGV inside `pm3_grabbed_output_get` instead of
+damage that surfaces minutes later. **Worth running any new libpm3 client under
+this at least once** — the failure mode is otherwise near-undebuggable.
+
 ## Next steps
 
 1. ~~Attach the Proxmark3 and run the check.~~ Done 2026-08-17.
-2. Build the SwiftUI app in `tools/pm3gui/`.
-3. Live Write and Wipe are verified working. They still alter a physical tag, so
-   keep Wipe behind a confirmation step in the UI.
+2. ~~Build the SwiftUI app in `tools/pm3gui/`.~~ Done — connect and read are
+   verified in the running app.
+3. Exercise Write and Wipe through the UI with a T5577 on the antenna. Both are
+   implemented and both refuse to run unless `lf t55xx detect` confirms a
+   writable, non-passworded T55xx, but neither has been clicked yet.
+
+### A note on automating the UI
+
+Driving the app with `System Events` coordinate clicks is unreliable — the
+window loses frontmost while the machine is in use and clicks land in other
+applications. Use accessibility references instead; the controls carry
+identifiers (`connectToggle`, `read`, `write`, `wipe`, `tagID`).
+
+Setting the text field's value through accessibility updates the `NSTextField`
+but does not propagate to the SwiftUI binding, so Write stays disabled. The ID
+has to be typed, or set in code.

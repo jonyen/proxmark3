@@ -60,11 +60,14 @@ struct ContentView: View {
 
                 Button("Rescan") { controller.refreshPorts() }
                     .disabled(controller.isConnected)
+                    .accessibilityIdentifier("rescan")
 
                 if controller.isConnected {
                     Button("Disconnect") { Task { await controller.disconnect() } }
+                        .accessibilityIdentifier("connectToggle")
                 } else {
                     Button("Connect") { Task { await controller.connect() } }
+                        .accessibilityIdentifier("connectToggle")
                         .keyboardShortcut(.defaultAction)
                         .disabled(controller.status.isBusy)
                 }
@@ -78,6 +81,8 @@ struct ContentView: View {
                 Text("Tag ID")
                     .frame(width: 60, alignment: .leading)
                 TextField("10 hex digits", text: $controller.tagID)
+                    .accessibilityIdentifier("tagID")
+                    .accessibilityLabel("Tag ID, 10 hex digits")
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.body, design: .monospaced))
                     .disabled(controller.status.isBusy)
@@ -85,14 +90,17 @@ struct ContentView: View {
 
             HStack(spacing: 12) {
                 Button("Read Tag") { Task { await controller.read() } }
+                    .accessibilityIdentifier("read")
                     .disabled(!controller.isConnected || controller.status.isBusy)
 
                 Button("Write Tag") { Task { await controller.write() } }
+                    .accessibilityIdentifier("write")
                     .disabled(!controller.canWrite)
 
                 Spacer()
 
                 Button("Wipe Tag") { confirmingWipe = true }
+                    .accessibilityIdentifier("wipe")
                     .disabled(!controller.isConnected || controller.status.isBusy)
                     .tint(.red)
             }

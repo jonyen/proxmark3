@@ -98,7 +98,7 @@ final class TagController {
             case .em410x(let id):
                 self.tagID = id
                 self.note("Read \(outcome.summary)")
-            case .blankChip, .nothing:
+            case .otherCredential, .blankChip, .nothing:
                 self.note(outcome.summary)
             }
         }
@@ -110,6 +110,7 @@ final class TagController {
             return
         }
         await perform("Writing") {
+            try await self.requireT55xx()
             let result = try await self.session.console("lf em 410x clone --id \(id)")
             guard PM3Output.writeSucceeded(result.output) else {
                 throw PM3GUIError.commandFailed("Write did not report success")
@@ -127,11 +128,30 @@ final class TagController {
 
     func wipe() async {
         await perform("Wiping") {
+            try await self.requireT55xx()
             let result = try await self.session.console("lf t55xx wipe")
             guard PM3Output.wipeSucceeded(result.output) else {
                 throw PM3GUIError.commandFailed("Wipe did not complete all blocks")
             }
             self.note("Wiped tag to default configuration")
+        }
+    }
+
+    /// Both Write and Wipe are T55xx-only commands. Running them against, say,
+    /// an EM4x05 card wastes time and reports failures that look like bugs, so
+    /// confirm what is on the antenna first and say so plainly if it is wrong.
+    private func requireT55xx() async throws {
+        let detect = try await session.console("lf t55xx detect")
+        guard let chip = PM3Output.t55xxChipType(in: detect.output) else {
+            throw PM3GUIError.commandFailed(
+                "No T55xx tag on the antenna. Write and Wipe only work on T5577."
+            )
+        }
+        note("Tag is \(chip)")
+        if PM3Output.passwordSet(detect.output) {
+            throw PM3GUIError.commandFailed(
+                "Tag is password protected; this app cannot write to it."
+            )
         }
     }
 
