@@ -1,0 +1,5 @@
+module CPM3 [system] {
+    header "../../../../client/include/pm3.h"
+    link "pm3rrg_rdv4"
+    export *
+}

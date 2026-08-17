@@ -16,6 +16,7 @@ tag, write a tag, wipe a tag.** Bench tool for personal use, not a product.
 | Tag family | **LF — T5577 / EM410x** | Read/write/wipe map to different command families per tag type; there is no generic version. T5577 is the standard rewritable LF card, `wipe` is a real single command, and no key management is involved. |
 | Write flow | **Copy last-read ID to a blank** | Read populates an ID field, Write clones that ID onto a T5577. Makes the four buttons a coherent sequence. Field stays editable as an override. |
 | Repo | **Fork `jonyen/proxmark3`** | Forked from `RfidResearchGroup/proxmark3` 2026-08-15. Left on `master` to match upstream. |
+| App location | **`tools/pm3gui/` inside the fork** | Keeps the app and the `libpm3` it links versioned together. Never PR'd upstream. |
 
 Commands these map to:
 
@@ -63,23 +64,26 @@ risk) builds and runs on Xcode 26 / arm64.
 | Compile `example_c/test_grab` | OK | OK |
 | Runtime init (session log, preferences) | OK | OK |
 | Bad-port error path | clean `ERROR: invalid serial port`, exit 1 | same |
-| **Real device I/O** | **UNVERIFIED — no hardware attached** | **UNVERIFIED — no hardware attached** |
+| **Real device I/O** | untested here | **VERIFIED 2026-08-17** |
 
 Everything up to the serial port works: the library loads, resolves symbols,
 reads `~/.proxmark3/preferences.json`, and fails gracefully rather than hanging.
 
-### The one open risk
+### The open risk is closed
 
-**No Proxmark3 is attached to either machine.** `pm3_open` against real hardware
-is the single unverified link. Before writing GUI code, plug the device in and run:
+On 2026-08-17 a Proxmark3 was attached to the datavault MacBook at
+`/dev/tty.usbmodemiceman1` and all four GUI actions were driven end to end
+through `libpm3` — `pm3_open`, `pm3_console`, `pm3_grabbed_output_get`,
+`pm3_close` — against a real T5577:
 
-```bash
-cd ~/Projects/proxmark3/client/experimental_lib/example_c
-DYLD_LIBRARY_PATH=../build ./test_grab "$(ioreg -r -c IOUSBHostDevice -l \
-  | awk -F '"' '$2=="USB Vendor Name"{b=($4=="proxmark.org")} b==1 && $2=="IODialinDevice"{print $4}')"
-```
+| Action | Command | Result |
+|---|---|---|
+| Connect | `pm3_open` + `hw status` | Full firmware status returned |
+| Read | `lf search` | Chip and ID reported |
+| Write | `lf em 410x clone --id 0102030405` | `Tag T55x7 written`, ID read back correctly |
+| Wipe | `lf t55xx wipe` | All 8 page-0 blocks reset, tag reads blank after |
 
-Expect real `hw status` output. If that works, the design is de-risked.
+The design is de-risked. No wrapper process is needed; the library is enough.
 
 Note: on 2026-08-15 `/dev/tty.usbmodemSN234567892` on the other Mac looked like a
 Proxmark3 but is an **Anker Type-C hub** (idVendor 10522 / 0x291A). Identify the
@@ -137,13 +141,63 @@ library. `-DSKIPLUA=1` is silently ignored — the flag does not exist.
 - Xcode 26.6, Swift 6.3.3, M4 Pro, GitHub SSH auth working as `jonyen`.
 - Build artifacts (`build/`, `test_grab`) are throwaway and gitignored.
 
+## What the captured output actually looks like
+
+Measured on real hardware, not guessed. These are what the GUI parses.
+
+**`pm3_console` return code is not a found/not-found signal.** `lf search`
+returned `-10` while successfully reporting `Chipset... T55xx`, and returned `0`
+on a full EM410x hit. Parse the text; use the return code only to detect a
+transport failure.
+
+Read, tag present:
+
+```
+[+] EM 410x ID 0102030405
+[+] EM410x ( RF/64 )
+...
+[+] Valid EM410x ID found!
+```
+
+Read, no tag (`rc = -10`):
+
+```
+[-] No known 125/134 kHz tags found!
+[=] Couldn't identify a chipset
+```
+
+Read, blank T5577 on the antenna (`rc = -10` — it is a chip, but carries no ID):
+
+```
+[-] No known 125/134 kHz tags found!
+[+] Chipset... T55xx
+```
+
+Write (`rc = 0`):
+
+```
+[#] Tag T55x7 written with 0xff8060280c048142
+[+] Done!
+```
+
+Wipe (`rc = 0`) writes 8 blocks and prints one line per block:
+
+```
+[=] Writing page 0  block: 00  data: 0x000880E0
+...
+[=] Writing page 0  block: 07  data: 0x00000000
+```
+
+Line prefixes are consistent and worth keying on: `[+]` success, `[-]` failure,
+`[=]` informational, `[#]` message from the device firmware, `[?]` hint.
+
+`lf t55xx detect` is the cheapest "is a writable tag present" probe, and reports
+`Password set...... No` — worth surfacing, since a passworded tag will fail to
+write.
+
 ## Next steps
 
-1. Attach the Proxmark3 and run the `test_grab` check above.
-2. Finish the design: window layout, how `lf search` output is parsed into an
-   EM410x ID, error and timeout handling, and where the app lives relative to
-   the fork.
-3. Confirm whether a scratch T5577 is available. **Write and Wipe alter a
-   physical tag and cannot be verified without one** — build them behind a
-   confirmation step and leave live testing to a human unless a throwaway tag is
-   explicitly offered.
+1. ~~Attach the Proxmark3 and run the check.~~ Done 2026-08-17.
+2. Build the SwiftUI app in `tools/pm3gui/`.
+3. Live Write and Wipe are verified working. They still alter a physical tag, so
+   keep Wipe behind a confirmation step in the UI.
