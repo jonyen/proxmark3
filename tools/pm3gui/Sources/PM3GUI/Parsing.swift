@@ -10,9 +10,11 @@ enum PM3Output {
     enum ReadOutcome: Equatable {
         /// A readable EM410x ID, the case the Write button copies from.
         case em410x(id: String)
-        /// A credential this app cannot clone — HID Prox, Indala and friends.
-        /// Worth naming rather than calling the tag empty.
-        case otherCredential(kind: String, chipset: String?)
+        /// A credential this app cannot clone in place — HID Prox, Indala and
+        /// friends. Worth naming rather than calling the tag empty, and the raw
+        /// value is worth surfacing: it is what `lf hid clone -r` writes to a
+        /// T5577 blank, so the credential is portable even when this chip is not.
+        case otherCredential(kind: String, chipset: String?, raw: String?)
         /// A chip is on the antenna but carries no ID — typically a blank T5577.
         case blankChip(name: String)
         /// Nothing on the antenna.
@@ -22,9 +24,10 @@ enum PM3Output {
             switch self {
             case .em410x(let id):
                 return "EM410x \(id)"
-            case .otherCredential(let kind, let chipset):
+            case .otherCredential(let kind, let chipset, let raw):
                 let chip = chipset.map { " on \($0)" } ?? ""
-                return "\(kind)\(chip) — not EM410x, cannot be cloned here"
+                let rawText = raw.map { ", raw \($0)" } ?? ""
+                return "\(kind)\(chip)\(rawText) — not EM410x, cannot be cloned here"
             case .blankChip(let name):
                 return "\(name) chip detected, but no EM410x ID on it"
             case .nothing:
@@ -41,7 +44,9 @@ enum PM3Output {
         // For EM410x that is handled above, so anything left is a credential
         // this app has no write path for.
         if let kind = validCredential(in: output) {
-            return .otherCredential(kind: kind, chipset: chipset(in: output))
+            return .otherCredential(
+                kind: kind, chipset: chipset(in: output), raw: rawValue(in: output)
+            )
         }
         if let chip = chipset(in: output) {
             return .blankChip(name: chip)
@@ -57,6 +62,26 @@ enum PM3Output {
     /// `[+] EM 410x ID 0102030405`
     static func emID(in output: String) -> String? {
         firstMatch(of: #/EM 410x ID ([0-9A-Fa-f]{10})/#, in: output)
+    }
+
+    /// `[=] raw: 0000000000000024022275e8` — `lf search` prints the decoded
+    /// credential as a raw hex blob, left-padded with zero *bytes* to the T55xx
+    /// block width. That padding is not data, so drop it: `24022275E8` is what
+    /// `lf hid clone -r` expects. Strip whole leading `00` bytes rather than
+    /// individual nibbles, because `-r` parses byte pairs — `01F0760643C3` keeps
+    /// its leading zero to stay six bytes, and an odd-length string fails to
+    /// parse. A blob of all zeros collapses to a single `00` byte.
+    static func rawValue(in output: String) -> String? {
+        guard let hex = firstMatch(of: #/raw:\s*([0-9A-Fa-f]+)/#, in: output) else {
+            return nil
+        }
+        var bytes = Substring(hex.uppercased())
+        // Ignore a stray leading nibble if the firmware ever prints odd length.
+        if bytes.count % 2 == 1 { bytes = bytes.dropFirst() }
+        while bytes.count > 2, bytes.hasPrefix("00") {
+            bytes = bytes.dropFirst(2)
+        }
+        return bytes.isEmpty ? "00" : String(bytes)
     }
 
     /// `[+] Chipset... T55xx`, or `[+] Chipset... EM4x05 / EM4x69` — the name can

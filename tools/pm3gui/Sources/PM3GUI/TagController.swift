@@ -36,6 +36,18 @@ final class TagController {
     var selectedPort: String = ""
     /// The ID Read populated, and the one Write will clone. Editable as an override.
     var tagID: String = ""
+
+    /// A non-EM410x credential a previous Read captured — e.g. an HID Prox blob.
+    /// Held sticky on purpose: the workflow is to read the original card, swap a
+    /// blank T5577 onto the antenna, then clone. Reading the blank must not erase
+    /// what we are about to write, so only a *new* credential read replaces it.
+    struct Capture: Equatable {
+        let kind: String
+        let raw: String
+        /// HID is the only family with a wired write path (`lf hid clone -r`).
+        var isCloneable: Bool { kind.uppercased().contains("HID") }
+    }
+    var captured: Capture?
     var log: [String] = []
     var lastError: String?
 
@@ -46,6 +58,11 @@ final class TagController {
 
     var canWrite: Bool {
         isConnected && !status.isBusy && TagID.normalise(tagID) != nil
+    }
+
+    /// Clone the captured raw credential onto whatever blank is on the antenna.
+    var canCloneRaw: Bool {
+        isConnected && !status.isBusy && (captured?.isCloneable ?? false)
     }
 
     init() {
@@ -98,7 +115,16 @@ final class TagController {
             case .em410x(let id):
                 self.tagID = id
                 self.note("Read \(outcome.summary)")
-            case .otherCredential, .blankChip, .nothing:
+            case .otherCredential(let kind, _, let raw):
+                // A fresh credential replaces any earlier capture; a hit with no
+                // raw (nothing to clone) leaves the previous capture untouched.
+                if let raw {
+                    self.captured = Capture(kind: kind, raw: raw)
+                }
+                self.note(outcome.summary)
+            case .blankChip, .nothing:
+                // Deliberately keep `captured`: this is usually the blank the
+                // user just swapped in, ready to receive the held credential.
                 self.note(outcome.summary)
             }
         }
@@ -120,6 +146,29 @@ final class TagController {
             let verify = try await self.session.console("lf search")
             if PM3Output.emID(in: verify.output) == id {
                 self.note("Verified: tag reads back \(id)")
+            } else {
+                self.note("Written, but read-back did not match")
+            }
+        }
+    }
+
+    /// Clone the captured raw credential (HID only for now) onto a blank T5577.
+    func cloneRaw() async {
+        guard let capture = captured, capture.isCloneable else {
+            fail("No cloneable credential captured. Read an HID card first.")
+            return
+        }
+        await perform("Writing") {
+            try await self.requireT55xx()
+            let result = try await self.session.console("lf hid clone -r \(capture.raw)")
+            guard PM3Output.writeSucceeded(result.output) else {
+                throw PM3GUIError.commandFailed("Clone did not report success")
+            }
+            self.note("Cloned raw \(capture.raw) to tag")
+            // Read back, so success on screen means the blank really carries it.
+            let verify = try await self.session.console("lf search")
+            if PM3Output.rawValue(in: verify.output) == capture.raw {
+                self.note("Verified: tag reads back \(capture.raw)")
             } else {
                 self.note("Written, but read-back did not match")
             }

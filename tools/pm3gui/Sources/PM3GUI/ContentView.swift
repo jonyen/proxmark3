@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct ContentView: View {
     @State private var controller = TagController()
@@ -88,6 +89,34 @@ struct ContentView: View {
                     .disabled(controller.status.isBusy)
             }
 
+            if let capture = controller.captured {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Captured")
+                            .frame(width: 60, alignment: .leading)
+                        Text("\(capture.kind)  \(capture.raw)")
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                            .accessibilityIdentifier("rawValue")
+                        Button {
+                            let pb = NSPasteboard.general
+                            pb.clearContents()
+                            pb.setString(capture.raw, forType: .string)
+                        } label: {
+                            Label("Copy", systemImage: "doc.on.doc")
+                        }
+                        .accessibilityIdentifier("copyRaw")
+                        Spacer()
+                    }
+                    Text(capture.isCloneable
+                         ? "Swap a blank T5577 onto the antenna, then Write to Blank."
+                         : "Held for reference. In-app cloning supports HID only.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 68)
+                }
+            }
+
             HStack(spacing: 12) {
                 Button("Read Tag") { Task { await controller.read() } }
                     .accessibilityIdentifier("read")
@@ -96,6 +125,12 @@ struct ContentView: View {
                 Button("Write Tag") { Task { await controller.write() } }
                     .accessibilityIdentifier("write")
                     .disabled(!controller.canWrite)
+
+                if controller.captured != nil {
+                    Button("Write to Blank") { Task { await controller.cloneRaw() } }
+                        .accessibilityIdentifier("cloneRaw")
+                        .disabled(!controller.canCloneRaw)
+                }
 
                 Spacer()
 
